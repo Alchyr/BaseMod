@@ -751,4 +751,40 @@ This is a fast forward to v1.6.3 of daviscook477's fork with a few additional ch
 * Add CloneablePower to base game powers introduced with v2.0 (Raz)
 * Fix crash with act command (Raz)
 
+#### v5.29.0 ####
+* Improve typing for dev console (Alchyr)
+* Fix crash to do with CardModifier with SaveIgnore in the master deck (JohnnyDevo)
+* New CardModifier hook: shouldApply (JohnnyDevo)
+* CardPowerTips (JohnnyDevo)
+  * Display a card in a tooltip
+* CardBorderGlowManager (JohnnyDevo)
+  * Allows card to have multiple glow colors at once
+* No longer cull potion rewards (erasels)
+  * BaseMod allows more than 5 combat rewards
+* Fix custom reward rendering on ultra-wide resolutions (NotInTheFace)
+* Fix character select screen on ultra-wide resolutions (NotInTheFace)
+* VfxBuilder (NotInTheFace)
+
+#### v5.30.0 ####
+* More reliable input canceling (Alchyr)
+* VfxBuilder features (NotInTheFace)
+  * New hook to call after rendering
+  * New hooks for animation phases starting/ending
+  * More interpolations
+
+#### v5.30.1 ####
+* Fix Console being openable while it's not enabled
+* Fix CardModifier atEndOfTurn triggering at the end of monster turns (JohnnyDevo)
+* Fix VFXBuilder to work with packed atlases
+
+#### v5.31.0 ####
+* New CardModifier hook: calculateCardDamage (JohnnyDevo)
+* Change CardModifier copy applying to new copied card after upgrades (JohnnyDevo)
+* * Fix EventUtil override bonus condition crash (Alchyr)
+
+#### v5.32.0 ####
+* Fix all CardMod onUse related hooks to not trigger when unplayable and autoplayed (JohnnyDevo)
+* Add standard common CardMods (Vex)
+* Make character select screen page arrows bigger (NotInTheFace)
+
 #### dev ####
