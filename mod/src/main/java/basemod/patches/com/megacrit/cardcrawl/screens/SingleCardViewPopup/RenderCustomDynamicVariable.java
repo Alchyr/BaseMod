@@ -2,6 +2,11 @@ package basemod.patches.com.megacrit.cardcrawl.screens.SingleCardViewPopup;
 
 import basemod.BaseMod;
 import basemod.abstracts.DynamicVariable;
+import basemod.helpers.CardModifierManager;
+import basemod.helpers.dynamicvariables.BlockVariable;
+import basemod.helpers.dynamicvariables.DamageVariable;
+import basemod.helpers.dynamicvariables.MagicNumberVariable;
+import basemod.patches.com.megacrit.cardcrawl.cards.AbstractCard.CardModifierPatches;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
@@ -99,13 +104,48 @@ public class RenderCustomDynamicVariable
             if (dv != null) {
                 num = dv.baseValue(card);
                 if (dv.upgraded(card)) {
-                    c = dv.getUpgradedColor();
+                    c = dv.getUpgradedColor(card);
                 } else {
                     c = dv.getNormalColor();
                 }
             } else {
                 logger.error("No dynamic card variable found for key \"" + key + "\"!");
             }
+
+            //cardmods affect base variables
+            int base = -1;
+            boolean modified = false;
+            if (CardModifierPatches.CardModifierFields.needsRecalculation.get(card)) {
+                CardModifierManager.testBaseValues(card);
+                CardModifierPatches.CardModifierFields.needsRecalculation.set(card, false);
+            }
+            if (dv instanceof BlockVariable && CardModifierPatches.CardModifierFields.cardModHasBaseBlock.get(card)) {
+                base = CardModifierPatches.CardModifierFields.cardModBaseBlock.get(card);
+                modified = true;
+            } else if (dv instanceof DamageVariable && CardModifierPatches.CardModifierFields.cardModHasBaseDamage.get(card)) {
+                base = CardModifierPatches.CardModifierFields.cardModBaseDamage.get(card);
+                modified = true;
+            } else if (dv instanceof MagicNumberVariable && CardModifierPatches.CardModifierFields.cardModHasBaseMagic.get(card)) {
+                base = CardModifierPatches.CardModifierFields.cardModBaseMagic.get(card);
+                modified = true;
+            }
+            if (modified) {
+                if (!CardModifierPatches.CardModifierFields.preCalculated.get(card)) {
+                    num = base;
+                }
+                if (CardModifierPatches.CardModifierFields.previewingUpgrade.get(card)) {
+                    c = dv.getIncreasedValueColor();
+                } else {
+                    if (num == base) {
+                        c = dv.getNormalColor();
+                    } else if (num > base) {
+                        c = dv.getIncreasedValueColor();
+                    } else {
+                        c = dv.getDecreasedValueColor();
+                    }
+                }
+            }
+
             stringBuilder.append(num);
             gl.setText(font, stringBuilder.toString());
             FontHelper.renderRotatedText(sb, font, stringBuilder.toString(),

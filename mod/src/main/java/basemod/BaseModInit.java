@@ -1,5 +1,6 @@
 package basemod;
 
+import basemod.interfaces.ImGuiSubscriber;
 import basemod.interfaces.PostInitializeSubscriber;
 import basemod.patches.whatmod.WhatMod;
 import com.badlogic.gdx.Gdx;
@@ -16,7 +17,7 @@ import com.megacrit.cardcrawl.helpers.ImageMaster;
  * Handles the creation of the ModBadge and settings panel for BaseMod
  *
  */
-public class BaseModInit implements PostInitializeSubscriber {
+public class BaseModInit implements PostInitializeSubscriber, ImGuiSubscriber {
 	public static final String MODNAME = "BaseMod";
 	public static final String AUTHOR = "t-larson, test447, FlipskiZ, Haashi, Blank The Evil, kiooeht, robojumper, Skrelpoid";
 	public static final String DESCRIPTION = "Modding API and Dev console.";
@@ -36,7 +37,9 @@ public class BaseModInit implements PostInitializeSubscriber {
 	private static final String AUTOCOMPLETE_INFO = "Press L_Shift + Up/Down to scroll through suggestions.\nPress Tab or Right to complete the current command.\nPress Left to delete the last token.";
 	public static final float WHATMOD_BUTTON_X = 350.0f;
 	public static final float WHATMOD_BUTTON_Y = 350.0f;
-	
+	public static final float FIXES_BUTTON_X = 350.0f;
+	public static final float FIXES_BUTTON_Y = 300.0f;
+
 	@Override
 	public void receivePostInitialize() {
 		// BaseMod post initialize handling
@@ -89,17 +92,29 @@ public class BaseModInit implements PostInitializeSubscriber {
 				});
 		settingsPanel.addUIElement(enableAutoComplete);
 
-		ModLabeledToggleButton enableWhatMod = new ModLabeledToggleButton("Enable mod name in tooltips",
+		ModLabeledToggleButton enableWhatMod = new ModLabeledToggleButton(
+				"Enable mod name in tooltips",
+				FontHelper.colorString("Must restart game to take effect.", "r"),
 				WHATMOD_BUTTON_X, WHATMOD_BUTTON_Y, Settings.CREAM_COLOR, FontHelper.charDescFont,
 				WhatMod.enabled, settingsPanel, (label) -> {},
 				(button) -> {
 					WhatMod.enabled = button.enabled;
 					BaseMod.setBoolean("whatmod-enabled", button.enabled);
-
 				}
 		);
 		settingsPanel.addUIElement(enableWhatMod);
-		settingsPanel.addUIElement(new ModLabel("Must restart game to take effect", WHATMOD_BUTTON_X, WHATMOD_BUTTON_Y - 30.0f, settingsPanel, (me) -> {} ));
+
+		ModLabeledToggleButton enabledFixes = new ModLabeledToggleButton(
+				"Enable base game fixes",
+				"BaseMod makes some gameplay changes to facilitate modded gameplay. Disabling this option disables those changes so you can have a purer vanilla experience.",
+				FIXES_BUTTON_X, FIXES_BUTTON_Y, Settings.CREAM_COLOR, FontHelper.charDescFont,
+				BaseMod.fixesEnabled, settingsPanel, (label) -> {},
+				(button) -> {
+					BaseMod.fixesEnabled = button.enabled;
+					BaseMod.setBoolean("basemod-fixes", button.enabled);
+				}
+		);
+		settingsPanel.addUIElement(enabledFixes);
 
 		Texture badgeTexture = ImageMaster.loadImage("img/BaseModBadge.png");
 		BaseMod.registerModBadge(badgeTexture, MODNAME, AUTHOR, DESCRIPTION, settingsPanel);
@@ -112,4 +127,14 @@ public class BaseModInit implements PostInitializeSubscriber {
 		BaseMod.initializeEncounters();
 	}
 
+	private BaseModImGuiUI ui = null;
+
+	@Override
+	public void receiveImGui()
+	{
+		if (ui == null) {
+			ui = new BaseModImGuiUI();
+		}
+		ui.receiveImGui();
+	}
 }

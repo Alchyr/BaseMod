@@ -1,8 +1,11 @@
 package basemod.patches.com.megacrit.cardcrawl.cards.AbstractCard;
 
 import basemod.BaseMod;
+import basemod.ReflectionHacks;
 import basemod.abstracts.AbstractCardModifier;
 import basemod.helpers.CardModifierManager;
+import basemod.patches.com.megacrit.cardcrawl.saveAndContinue.SaveFile.ModSaves;
+import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
@@ -10,6 +13,9 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.math.MathUtils;
 import com.evacipated.cardcrawl.modthespire.ModInfo;
 import com.evacipated.cardcrawl.modthespire.lib.*;
+import com.evacipated.cardcrawl.modthespire.patcher.PatchingException;
+import com.google.gson.*;
+import com.google.gson.reflect.TypeToken;
 import com.google.gson.typeadapters.RuntimeTypeAdapterFactory;
 import com.megacrit.cardcrawl.actions.unique.RestoreRetainedCardsAction;
 import com.megacrit.cardcrawl.actions.utility.UseCardAction;
@@ -19,9 +25,14 @@ import com.megacrit.cardcrawl.characters.AbstractPlayer;
 import com.megacrit.cardcrawl.core.AbstractCreature;
 import com.megacrit.cardcrawl.core.Settings;
 import com.megacrit.cardcrawl.dungeons.AbstractDungeon;
+import com.megacrit.cardcrawl.helpers.CardHelper;
 import com.megacrit.cardcrawl.helpers.FontHelper;
+import com.megacrit.cardcrawl.metrics.Metrics;
 import com.megacrit.cardcrawl.monsters.AbstractMonster;
 import com.megacrit.cardcrawl.screens.SingleCardViewPopup;
+import com.megacrit.cardcrawl.screens.runHistory.RunHistoryScreen;
+import com.megacrit.cardcrawl.screens.runHistory.TinyCard;
+import com.megacrit.cardcrawl.screens.stats.RunData;
 import javassist.*;
 import javassist.expr.ExprEditor;
 import javassist.expr.FieldAccess;
@@ -33,18 +44,124 @@ import java.io.File;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.Map;
 
 public class CardModifierPatches
 {
+
+    @SpirePatch2(clz = AbstractCard.class, method = "upgradeDamage")
+    @SpirePatch2(clz = AbstractCard.class, method = "upgradeBlock")
+    @SpirePatch2(clz = AbstractCard.class, method = "upgradeMagicNumber")
+    public static class RecalculateOnStatChange {
+        @SpirePrefixPatch
+        public static void recalculate(AbstractCard __instance, @ByRef int[] amount) {
+            CardModifierManager.testBaseValues(__instance);
+            CardModifierFields.needsRecalculation.set(__instance, true);
+        }
+    }
+
+    @SpirePatch2(clz = CardHelper.class, method = "hasCardWithXDamage")
+    public static class FixDamageRequirement {
+        @SpireInstrumentPatch
+        public static ExprEditor plz() {
+            return new ExprEditor() {
+                @Override
+                public void edit(FieldAccess f) throws CannotCompileException {
+                    if (f.getClassName().equals(AbstractCard.class.getName()) && f.getFieldName().equals("baseDamage")) {
+                        f.replace("$_ = basemod.patches.com.megacrit.cardcrawl.cards.AbstractCard.CardModifierPatches.FixDamageRequirement.effectiveBase($0);");
+                    }
+                }
+            };
+        }
+
+        public static int effectiveBase(AbstractCard card) {
+            if (CardModifierFields.cardModHasBaseDamage.get(card)) {
+                return CardModifierFields.cardModBaseDamage.get(card);
+            }
+            return card.baseDamage;
+        }
+    }
+
+    @SpirePatch2(clz = AbstractCard.class, method = "displayUpgrades")
+    public static class UpdateUpgradePreview {
+        @SpirePostfixPatch
+        public static void plz(AbstractCard __instance) {
+            CardModifierManager.testBaseValues(__instance);
+            CardModifierFields.previewingUpgrade.set(__instance, true);
+        }
+    }
+
     @SpirePatch(
             clz = AbstractCard.class,
             method = "calculateCardDamage"
     )
     public static class CardModifierCalculateCardDamage
     {
+        //modifyBaseMagic
+        public static void Prefix(AbstractCard __instance) {
+            if (CardModifierFields.cardModHasBaseMagic.get(__instance)) {
+                __instance.magicNumber = (int) CardModifierManager.onModifyBaseMagic(__instance.baseMagicNumber, __instance);
+                __instance.isMagicNumberModified = __instance.magicNumber != __instance.baseMagicNumber;
+            }
+        }
+
         //onCalculateCardDamage
         public static void Postfix(AbstractCard __instance, AbstractMonster mo) {
             CardModifierManager.onCalculateCardDamage(__instance, mo);
+        }
+
+        //modifyBaseDamage
+        @SpireInsertPatch(
+                locator = BaseDamageLocator.class,
+                localvars = {"tmp"}
+        )
+        public static void baseDamageInsert(AbstractCard __instance, AbstractMonster m, @ByRef float[] tmp) {
+            float base = tmp[0];
+            tmp[0] = CardModifierManager.onModifyBaseDamage(tmp[0], __instance, m);
+            if (tmp[0] != base) {
+                CardModifierFields.cardModBaseDamage.set(__instance, (int)tmp[0]);
+                CardModifierFields.cardModHasBaseDamage.set(__instance, true);
+            } else {
+                CardModifierFields.cardModHasBaseDamage.set(__instance, false);
+            }
+        }
+
+        private static class BaseDamageLocator extends SpireInsertLocator
+        {
+            @Override
+            public int[] Locate(CtBehavior ctMethodToPatch) throws Exception
+            {
+                Matcher finalMatcher = new Matcher.FieldAccessMatcher(AbstractPlayer.class, "relics");
+                int[] tmp = LineFinder.findAllInOrder(ctMethodToPatch, finalMatcher);
+                return new int[] {tmp[0]};
+            }
+        }
+
+        @SpireInsertPatch(
+                locator = MultiBaseDamageLocator.class,
+                localvars = {"tmp", "i", "m"}
+        )
+        public static void multiBaseDamageInsert(AbstractCard __instance, AbstractMonster mo, float[] tmp, int i, ArrayList<AbstractMonster> m) {
+            float base = tmp[i];
+            tmp[i] = CardModifierManager.onModifyBaseDamage(tmp[i], __instance, m.get(i));
+            if (tmp[i] != base) {
+                CardModifierFields.cardModBaseDamage.set(__instance, (int)tmp[i]);
+                CardModifierFields.cardModHasBaseDamage.set(__instance, true);
+            } else {
+                CardModifierFields.cardModHasBaseDamage.set(__instance, false);
+            }
+        }
+
+        private static class MultiBaseDamageLocator extends SpireInsertLocator
+        {
+            @Override
+            public int[] Locate(CtBehavior ctMethodToPatch) throws Exception
+            {
+                Matcher finalMatcher = new Matcher.FieldAccessMatcher(AbstractPlayer.class, "relics");
+                int[] tmp = LineFinder.findAllInOrder(ctMethodToPatch, finalMatcher);
+                return new int[] {tmp[1]};
+            }
         }
 
         //modifyDamage
@@ -138,6 +255,14 @@ public class CardModifierPatches
                 localvars = {"tmp"}
         )
         public static void blockInsert(AbstractCard __instance, @ByRef float[] tmp) {
+            float base = tmp[0];
+            tmp[0] = CardModifierManager.onModifyBaseBlock(tmp[0], __instance);
+            if (tmp[0] != base) {
+                CardModifierFields.cardModBaseBlock.set(__instance, (int)tmp[0]);
+                CardModifierFields.cardModHasBaseBlock.set(__instance, true);
+            } else {
+                CardModifierFields.cardModHasBaseBlock.set(__instance, false);
+            }
             tmp[0] = CardModifierManager.onModifyBlock(tmp[0], __instance);
         }
 
@@ -177,9 +302,72 @@ public class CardModifierPatches
     )
     public static class CardModifierOnApplyPowers
     {
+        //modifyBaseMagic
+        public static void Prefix(AbstractCard __instance) {
+            if (CardModifierFields.cardModHasBaseMagic.get(__instance)) {
+                __instance.magicNumber = (int) CardModifierManager.onModifyBaseMagic(__instance.baseMagicNumber, __instance);
+                __instance.isMagicNumberModified = __instance.magicNumber != __instance.baseMagicNumber;
+            }
+        }
+
         //onApplyPowers
         public static void Postfix(AbstractCard __instance) {
             CardModifierManager.onApplyPowers(__instance);
+            CardModifierFields.previewingUpgrade.set(__instance, false);
+            CardModifierFields.preCalculated.set(__instance, true);
+        }
+
+        //modifyBaseDamage
+        @SpireInsertPatch(
+                locator = BaseDamageLocator.class,
+                localvars = {"tmp"}
+        )
+        public static void baseDamageInsert(AbstractCard __instance, @ByRef float[] tmp) {
+            float base = tmp[0];
+            tmp[0] = CardModifierManager.onModifyBaseDamage(tmp[0], __instance, null);
+            if (tmp[0] != base) {
+                CardModifierFields.cardModBaseDamage.set(__instance, (int)tmp[0]);
+                CardModifierFields.cardModHasBaseDamage.set(__instance, true);
+            } else {
+                CardModifierFields.cardModHasBaseDamage.set(__instance, false);
+            }
+        }
+
+        private static class BaseDamageLocator extends SpireInsertLocator
+        {
+            @Override
+            public int[] Locate(CtBehavior ctMethodToPatch) throws Exception
+            {
+                Matcher finalMatcher = new Matcher.FieldAccessMatcher(AbstractPlayer.class, "relics");
+                int[] tmp = LineFinder.findAllInOrder(ctMethodToPatch, finalMatcher);
+                return new int[] {tmp[0]};
+            }
+        }
+
+        @SpireInsertPatch(
+                locator = MultiDamageLocator.class,
+                localvars = {"tmp", "i"}
+        )
+        public static void multiBaseDamageInsert(AbstractCard __instance, float[] tmp, int i) {
+            float base = tmp[i];
+            tmp[i] = CardModifierManager.onModifyBaseDamage(tmp[i], __instance, null);
+            if (tmp[i] != base) {
+                CardModifierFields.cardModBaseDamage.set(__instance, (int)tmp[i]);
+                CardModifierFields.cardModHasBaseDamage.set(__instance, true);
+            } else {
+                CardModifierFields.cardModHasBaseDamage.set(__instance, false);
+            }
+        }
+
+        private static class MultiBaseDamageLocator extends SpireInsertLocator
+        {
+            @Override
+            public int[] Locate(CtBehavior ctMethodToPatch) throws Exception
+            {
+                Matcher finalMatcher = new Matcher.FieldAccessMatcher(AbstractPlayer.class, "relics");
+                int[] tmp = LineFinder.findAllInOrder(ctMethodToPatch, finalMatcher);
+                return new int[] {tmp[1]};
+            }
         }
 
         //modifyDamage
@@ -354,12 +542,34 @@ public class CardModifierPatches
         }
     }
 
+    @SpirePatch2(clz = TinyCard.class, method = "getText")
+    public static class CardModNamesInRunHistory {
+        @SpireInstrumentPatch
+        public static ExprEditor patch() {
+            return new ExprEditor() {
+                @Override
+                public void edit(FieldAccess f) throws CannotCompileException {
+                    if (f.getClassName().equals(AbstractCard.class.getName()) && f.getFieldName().equals("name")) {
+                        f.replace("$_ = " + CardModifierManager.class.getName() + ".onRenderTitle($0, $proceed($$));");
+                    }
+                }
+            };
+        }
+    }
+
     @SpirePatch(
             clz = AbstractCard.class,
             method = "makeStatEquivalentCopy"
     )
     public static class CardModifierStatEquivalentCopyModifiers
     {
+
+        @SpirePostfixPatch
+        public static AbstractCard fixBaseDamage(AbstractCard __result, AbstractCard __instance) {
+            CardModifierFields.needsRecalculation.set(__result, true);
+            return __result;
+        }
+
         @SpireInsertPatch(
                 locator = Locator.class,
                 localvars = {"card"}
@@ -390,15 +600,31 @@ public class CardModifierPatches
         }
     }
 
-    @SpirePatch(
+    @SpirePatch2(
             clz = AbstractCard.class,
             method = "render",
-            paramtypez = {SpriteBatch.class}
+            paramtypez = {SpriteBatch.class, boolean.class}
+    )
+    @SpirePatch2(
+            clz = AbstractCard.class,
+            method = "renderInLibrary"
     )
     public static class CardModifierRender
     {
+        @SpirePostfixPatch
         public static void Postfix(AbstractCard __instance, SpriteBatch sb) {
             CardModifierManager.onRender(__instance, sb);
+        }
+    }
+    @SpirePatch(
+            clz = SingleCardViewPopup.class,
+            method = "render"
+    )
+    public static class CardModifierSingleCardViewRender
+    {
+        @SpirePostfixPatch
+        public static void Postfix(SingleCardViewPopup __instance, SpriteBatch sb) {
+            CardModifierManager.onSingleCardViewRender(__instance, sb);
         }
     }
 
@@ -425,6 +651,7 @@ public class CardModifierPatches
     {
         public static void Prefix(AbstractCard __instance) {
             CardModifierManager.removeEndOfTurnModifiers(__instance);
+            CardModifierFields.preCalculated.set(__instance, false);
         }
     }
 
@@ -435,6 +662,15 @@ public class CardModifierPatches
     public static class CardModifierFields
     {
         public static SpireField<ArrayList<AbstractCardModifier>> cardModifiers = new SpireField<>(ArrayList::new);
+        public static SpireField<Integer> cardModBaseDamage = new SpireField<>(() -> 0);
+        public static SpireField<Boolean> cardModHasBaseDamage = new SpireField<>(() -> false);
+        public static SpireField<Integer> cardModBaseBlock = new SpireField<>(() -> 0);
+        public static SpireField<Boolean> cardModHasBaseBlock = new SpireField<>(() -> false);
+        public static SpireField<Integer> cardModBaseMagic = new SpireField<>(() -> 0);
+        public static SpireField<Boolean> cardModHasBaseMagic = new SpireField<>(() -> false);
+        public static SpireField<Boolean> previewingUpgrade = new SpireField<>(() -> false);
+        public static SpireField<Boolean> preCalculated = new SpireField<>(() -> false);
+        public static SpireField<Boolean> needsRecalculation = new SpireField<>(() -> true);
     }
 
     @SpirePatch(
@@ -615,6 +851,171 @@ public class CardModifierPatches
                 }
             } catch (ClassNotFoundException e) {
                 e.printStackTrace();
+            }
+        }
+    }
+
+    public static final String CARDMODS_KEY = "basemod:card_modifiers";
+    public static HashMap<RunData, ModSaves.ArrayListOfJsonElement> cardmodDataMap = new HashMap<>();
+
+    @SpirePatch2(clz = Metrics.class, method = "gatherAllData")
+    public static class AddCardmodsToMetrics {
+        public static ModSaves.ArrayListOfJsonElement createCardmodData() {
+            //Master deck AbstractCardModifiers
+            ModSaves.ArrayListOfJsonElement cardModifierSaves = new ModSaves.ArrayListOfJsonElement();
+            GsonBuilder builder = new GsonBuilder();
+            if (CardModifierPatches.modifierAdapter == null) {
+                CardModifierPatches.initializeAdapterFactory();
+            }
+            builder.registerTypeAdapterFactory(CardModifierPatches.modifierAdapter);
+            Gson gson = builder.create();
+            for (AbstractCard card : AbstractDungeon.player.masterDeck.group) {
+                ArrayList<AbstractCardModifier> cardModifierList = CardModifierPatches.CardModifierFields.cardModifiers.get(card);
+                ArrayList<AbstractCardModifier> saveIgnores = new ArrayList<>();
+                for (AbstractCardModifier mod : cardModifierList) {
+                    if (mod.getClass().isAnnotationPresent(AbstractCardModifier.SaveIgnore.class)) {
+                        saveIgnores.add(mod);
+                    }
+                }
+                if (!saveIgnores.isEmpty()) {
+                    BaseMod.logger.warn("attempted to save un-savable card modifiers. Modifiers marked @SaveIgnore will not be saved on master deck.");
+                    BaseMod.logger.info("affected card: " + card.cardID);
+                    for (AbstractCardModifier mod : saveIgnores) {
+                        BaseMod.logger.info("saveIgnore mod: " + mod.getClass().getName());
+                    }
+                    cardModifierList.removeAll(saveIgnores);
+                }
+                if (!cardModifierList.isEmpty()) {
+                    cardModifierSaves.add(gson.toJsonTree(cardModifierList, new TypeToken<ArrayList<AbstractCardModifier>>(){}.getType()));
+                } else {
+                    cardModifierSaves.add(null);
+                }
+            }
+            return cardModifierSaves;
+        }
+
+        @SpirePostfixPatch
+        public static void addDataToMetrics(Metrics __instance) {
+            ReflectionHacks.RMethod addDataMethod = ReflectionHacks.privateMethod(Metrics.class, "addData", Object.class, Object.class);
+            addDataMethod.invoke(__instance, CARDMODS_KEY, createCardmodData());
+        }
+    }
+
+    @SpirePatch2(clz = RunHistoryScreen.class, method = "refreshData")
+    public static class DataFromGson {
+        @SpirePrefixPatch
+        public static void setupMap() {
+            cardmodDataMap = new HashMap<>();
+        }
+
+        @SpireInsertPatch(locator = Locator.class, localvars = {"file", "data"})
+        public static void loadDataFromGson(RunHistoryScreen __instance, FileHandle file, RunData data) {
+            JsonObject reparsedData = (new Gson()).fromJson(file.readString(), JsonObject.class);
+            ModSaves.ArrayListOfJsonElement runData = null;
+            for (Map.Entry<String, JsonElement> entry : reparsedData.entrySet()) {
+                if (entry.getKey().equals(CARDMODS_KEY) && entry.getValue().isJsonArray()) {
+                    runData = new ModSaves.ArrayListOfJsonElement();
+                    JsonArray a = entry.getValue().getAsJsonArray();
+                    for (int i = 0 ; i < a.size() ; i++) {
+                        runData.add(a.get(i));
+                    }
+                }
+            }
+            cardmodDataMap.put(data, runData);
+        }
+
+        private static class Locator extends SpireInsertLocator {
+            public int[] Locate(CtBehavior ctMethodToPatch) throws PatchingException, CannotCompileException {
+                Matcher.MethodCallMatcher methodCallMatcher = new Matcher.MethodCallMatcher(ArrayList.class, "add");
+                return LineFinder.findInOrder(ctMethodToPatch, new ArrayList(), methodCallMatcher);
+            }
+        }
+    }
+
+    @SpirePatch2(clz = RunHistoryScreen.class, method = "reloadCards")
+    public static class ApplyCardModsToCards {
+        static int i = -1;
+        static ModSaves.ArrayListOfJsonElement cardmodData = null;
+        static GsonBuilder builder = null;
+        static Gson gson = null;
+        static final ArrayList<AbstractCardModifier> loadedMods = new ArrayList<>();
+        static String idBackup = "";
+
+        @SpirePrefixPatch
+        public static void reset(RunData runData) {
+            i = 0;
+            cardmodData = cardmodDataMap.getOrDefault(runData, null);
+            if (cardmodData != null) {
+                builder = new GsonBuilder();
+                if (CardModifierPatches.modifierAdapter == null) {
+                    CardModifierPatches.initializeAdapterFactory();
+                }
+                builder.registerTypeAdapterFactory(CardModifierPatches.modifierAdapter);
+                gson = builder.create();
+            }
+        }
+
+        @SpireInsertPatch(locator = LocatorLoad.class, localvars = {"cardID"})
+        public static void loadMods(@ByRef String[] cardID) {
+            loadedMods.clear();
+            idBackup = cardID[0];
+            if (cardmodData != null) {
+                AbstractCardModifier cardModifier;
+                if (cardmodData.get(i).isJsonArray()) {
+                    JsonArray array = cardmodData.get(i).getAsJsonArray();
+                    for (JsonElement element : array) {
+                        try {
+                            cardModifier = gson.fromJson(element, new TypeToken<AbstractCardModifier>(){}.getType());
+                            loadedMods.add(cardModifier);
+                            cardID[0] += "&"+element;
+                        } catch (Exception ignored) {
+                            BaseMod.logger.warn("[Run History] - Unable to load cardmod: " + element);
+                        }
+                    }
+                }
+                i++;
+            }
+        }
+
+        public static String getIdBackup() {
+            return idBackup;
+        }
+
+        @SpireInstrumentPatch
+        public static ExprEditor fixID() {
+            return new ExprEditor() {
+                @Override
+                public void edit(MethodCall m) throws CannotCompileException {
+                    if (m.getClassName().equals(RunHistoryScreen.class.getName()) && m.getMethodName().equals("cardForName")) {
+                        m.replace("$2 = "+ApplyCardModsToCards.class.getName()+".getIdBackup(); $_ = $proceed($$);");
+                    }
+                }
+            };
+        }
+
+        @SpireInsertPatch(locator = LocatorApply.class, localvars = {"cardID","card"})
+        public static void applyMods(RunData runData, @ByRef String[] cardID, AbstractCard card) {
+            if (cardmodData != null) {
+                CardModifierManager.removeAllModifiers(card, true);
+                for (AbstractCardModifier mod : loadedMods) {
+                    CardModifierManager.addModifier(card, mod.makeCopy());
+                }
+            }
+        }
+
+        public static class LocatorLoad extends SpireInsertLocator {
+            @Override
+            public int[] Locate(CtBehavior ctBehavior) throws Exception {
+                Matcher m = new Matcher.MethodCallMatcher(Hashtable.class, "containsKey");
+                return LineFinder.findInOrder(ctBehavior, m);
+            }
+        }
+
+        public static class LocatorApply extends SpireInsertLocator {
+            @Override
+            public int[] Locate(CtBehavior ctBehavior) throws Exception {
+                Matcher m = new Matcher.MethodCallMatcher(RunHistoryScreen.class, "cardForName");
+                return new int[]{LineFinder.findInOrder(ctBehavior, m)[0]+1};
             }
         }
     }

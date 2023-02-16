@@ -16,12 +16,14 @@ public class AddEventParams
 	public EventUtils.EventType eventType = EventUtils.EventType.NORMAL;
 
 	public List<String> dungeonIDs = new ArrayList<>();
-	public AbstractPlayer.PlayerClass playerClass = null;
+	public List<AbstractPlayer.PlayerClass> playerClasses = new ArrayList<>();
 
 	public Condition spawnCondition = null;
 	public Condition bonusCondition = null;
 
 	public String overrideEventID = null;
+
+	public boolean endsWithRewardsUI = false;
 
 	public static class Builder
 	{
@@ -52,7 +54,13 @@ public class AddEventParams
 
 		public Builder playerClass(AbstractPlayer.PlayerClass playerClass)
 		{
-			params.playerClass = playerClass;
+			params.playerClasses.add(playerClass);
+			return this;
+		}
+
+		public Builder playerClasses(AbstractPlayer.PlayerClass... playerClass)
+		{
+			Collections.addAll(params.playerClasses, playerClass);
 			return this;
 		}
 
@@ -77,6 +85,11 @@ public class AddEventParams
 		public Builder eventType(EventUtils.EventType eventType)
 		{
 			params.eventType = eventType;
+			return this;
+		}
+
+		public Builder endsWithRewardsUI(boolean value) {
+			params.endsWithRewardsUI = value;
 			return this;
 		}
 	}

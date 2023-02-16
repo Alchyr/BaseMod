@@ -1,6 +1,6 @@
 package basemod.abstracts;
 
-import com.badlogic.gdx.graphics.Color;
+import basemod.helpers.TooltipInfo;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.megacrit.cardcrawl.actions.utility.UseCardAction;
 import com.megacrit.cardcrawl.cards.AbstractCard;
@@ -13,6 +13,8 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.Collections;
+import java.util.List;
 
 public abstract class AbstractCardModifier implements Comparable<AbstractCardModifier> {
     public int priority = 0;
@@ -46,6 +48,11 @@ public abstract class AbstractCardModifier implements Comparable<AbstractCardMod
      * all card parameters pass the instance of the card which the mod is applied to.
      * AbstractMonster parameters will pass null when called from ApplyPowers.
      */
+    //called before any damage increases, will also render outside the hand
+    public float modifyBaseDamage(float damage, DamageInfo.DamageType type, AbstractCard card, AbstractMonster target) {
+        return damage;
+    }
+
     //called before related power functions, for flat increases, to happen before vulnerable.
     public float modifyDamage(float damage, DamageInfo.DamageType type, AbstractCard card, AbstractMonster target) {
         return damage;
@@ -56,6 +63,11 @@ public abstract class AbstractCardModifier implements Comparable<AbstractCardMod
         return damage;
     }
 
+    //called before any block increases, will also render outside the hand
+    public float modifyBaseBlock(float block, AbstractCard card) {
+        return block;
+    }
+
     //called before power functions, for flat increases.
     public float modifyBlock(float block, AbstractCard card) {
         return block;
@@ -64,6 +76,11 @@ public abstract class AbstractCardModifier implements Comparable<AbstractCardMod
     //called after power functions, for percentage and immutable(panic button-like) changes.
     public float modifyBlockFinal(float block, AbstractCard card) {
         return block;
+    }
+
+    //called before any magic number increases, will also render outside the hand
+    public float modifyBaseMagic(float magic, AbstractCard card) {
+        return magic;
     }
 
     /**
@@ -80,6 +97,14 @@ public abstract class AbstractCardModifier implements Comparable<AbstractCardMod
      */
     public String modifyName(String cardName, AbstractCard card) {
         return cardName;
+    }
+
+    /**
+     * Called just before Basemod renders the other additional tooltips the card may have,
+     * at the end of the card's renderKeywords method.
+     */
+    public List<TooltipInfo> additionalTooltips(AbstractCard card) {
+        return null;
     }
 
     /**
@@ -139,6 +164,10 @@ public abstract class AbstractCardModifier implements Comparable<AbstractCardMod
 
     }
 
+    public void onSingleCardViewRender(AbstractCard card, SpriteBatch sb) {
+
+    }
+
     /**
      * triggers at the end of the player's turn. The group passed is the current location of the card at the
      * time that this method is called.
@@ -189,6 +218,13 @@ public abstract class AbstractCardModifier implements Comparable<AbstractCardMod
      */
     public boolean shouldApply(AbstractCard card) {
         return true;
+    }
+
+    /**
+     * return a list of words to be rendered with the card's card type
+     */
+    public List<String> extraDescriptors(AbstractCard card) {
+        return Collections.emptyList();
     }
 
     /**
